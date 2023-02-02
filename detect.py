@@ -32,13 +32,30 @@ import sys
 from pathlib import Path
 
 import torch
+import requests
+import json
+
+def sendEvent(message):
+    url = "http://www.maifocus.com:3006/api/v1/call/6332963e19dd2858fabc62f6/addEvent"
+
+    payload = json.dumps({
+    "event": message 
+    })
+    headers = {
+    'Authorization': '',
+    'Content-Type': 'application/json'
+    }
+
+    response = requests.request("POST", url, headers=headers, data=payload)
+    LOGGER.info(f"Send a fire event {response.text}")
+    print(response.text)
+
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[0]  # YOLOv5 root directory
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))  # add ROOT to PATH
 ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
-SPEED = 120
 
 from models.common import DetectMultiBackend
 from utils.dataloaders import IMG_FORMATS, VID_FORMATS, LoadImages, LoadScreenshots, LoadStreams
@@ -112,6 +129,7 @@ def run(
     # Run inference
     model.warmup(imgsz=(1 if pt or model.triton else bs, 3, *imgsz))  # warmup
     seen, windows, dt = 0, [], (Profile(), Profile(), Profile())
+    sum = 0
     for path, im, im0s, vid_cap, s in dataset:
         with dt[0]:
             im = torch.from_numpy(im).to(model.device)
@@ -133,7 +151,6 @@ def run(
         # pred = utils.general.apply_classifier(pred, classifier_model, im, im0s)
 
         # Process predictions
-        save_path = ""
         for i, det in enumerate(pred):  # per image
             seen += 1
             if webcam:  # batch_size >= 1
@@ -143,11 +160,7 @@ def run(
                 p, im0, frame = path, im0s.copy(), getattr(dataset, 'frame', 0)
 
             p = Path(p)  # to Path
-            save_path_tmp = str(save_dir / (p.name  + str((seen-1) // SPEED)))  # im.jpg
-            if seen == 1:
-                save_first_file = save_path_tmp
-            save_path = str(save_dir / (p.name  + str(seen // SPEED)))  # im.jpg
-            print(f'save_path={save_path} save_path_tmp={save_path_tmp} save_dir={save_dir} seen={seen}')
+            save_path = str(save_dir / p.name)  # im.jpg
             txt_path = str(save_dir / 'labels' / p.stem) + ('' if dataset.mode == 'image' else f'_{frame}')  # im.txt
             s += '%gx%g ' % im.shape[2:]  # print string
             gn = torch.tensor(im0.shape)[[1, 0, 1, 0]]  # normalization gain whwh
@@ -161,11 +174,13 @@ def run(
                 for c in det[:, 5].unique():
                     n = (det[:, 5] == c).sum()  # detections per class
                     s += f"{n} {names[int(c)]}{'s' * (n > 1)}, "  # add to string
+                    sum += int(n)
 
                 # Write results
                 for *xyxy, conf, cls in reversed(det):
                     if save_txt:  # Write to file
                         xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
+                        LOGGER.info(f"xywh={xywh}")
                         line = (cls, *xywh, conf) if save_conf else (cls, *xywh)  # label format
                         with open(f'{txt_path}.txt', 'a') as f:
                             f.write(('%g ' * len(line)).rstrip() % line + '\n')
@@ -184,7 +199,7 @@ def run(
                     windows.append(p)
                     cv2.namedWindow(str(p), cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)  # allow window resize (Linux)
                     cv2.resizeWindow(str(p), im0.shape[1], im0.shape[0])
-                cv2.imshow(str(p), im0)
+                #cv2.imshow(str(p), im0)
                 cv2.waitKey(1)  # 1 millisecond
 
             # Save results (image with detections)
@@ -201,36 +216,16 @@ def run(
                             w = int(vid_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
                             h = int(vid_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
                         else:  # stream
-                            fps, w, h = 10, im0.shape[1], im0.shape[0]
-                        save_first_file = str(Path(save_first_file).with_suffix('.mp4'))  # force *.mp4 suffix on results videos
-                        save_path_tmp = str(Path(save_path_tmp).with_suffix('.mp4'))  # force *.mp4 suffix on results videos
+                            fps, w, h = 30, im0.shape[1], im0.shape[0]
                         save_path = str(Path(save_path).with_suffix('.mp4'))  # force *.mp4 suffix on results videos
                         vid_writer[i] = cv2.VideoWriter(save_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
                     vid_writer[i].write(im0)
 
-        if (seen % SPEED) == 0:
-            #save_path_tmp = save_path
-            vid_writer[i] = cv2.VideoWriter(save_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
-            pid = os.fork()
-            if pid > 0:
-                print(f'save_path={save_path} save_path_tmp={save_path_tmp} seen={seen}')
-            else:
-                print(f'I am in child {pid}')
-                #cmd = f'ffmpeg  -re -i {save_path_tmp}  -vcodec libx264 -ar 44100 -ac 1 -f flv rtmp://localhost/live/{name}'
-                cmd =  f'rm  /home/ubuntu/web-app/src/assets/videos/{name}/camera.mp4'
-                print(cmd)
-                os.system(cmd)
-                cmd = f'rm /tmp/camera.{name}.mp4; cat {save_first_file} {save_path_tmp} > /tmp/camera.{name}.mp4'
-                print(cmd)
-                os.system(cmd)
-                cmd = f'ffmpeg  -i /tmp/camera.{name}.mp4  -c:v libx264 /home/ubuntu/web-app/src/assets/videos/{name}/camera.mp4'
-                print(cmd)
-                os.system(cmd)
-                cmd = f'cp /home/ubuntu/web-app/src/assets/videos/{name}/camera.mp4 /var/www/html/recordings/{name}/camera.mp4'
-                print(cmd)
-                os.system(cmd)
         # Print time (inference-only)
         LOGGER.info(f"{s}{'' if len(det) else '(no detections), '}{dt[1].dt * 1E3:.1f}ms")
+        LOGGER.info(f"{sum}")
+        if (sum % 150) == 0:
+            sendEvent(f"Police ALERT {name} ")
 
     # Print results
     t = tuple(x.t / seen * 1E3 for x in dt)  # speeds per image
