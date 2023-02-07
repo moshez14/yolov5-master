@@ -35,8 +35,9 @@ import torch
 import requests
 import json
 
-def sendEvent(message):
-    url = "http://www.maifocus.com:3006/api/v1/call/6332963e19dd2858fabc62f6/addEvent"
+def sendEvent(message,call_id):
+    url = f"http://www.maifocus.com:3006/api/v1/call/{call_id}/addEvent"
+    LOGGER.info(url)
 
     payload = json.dumps({
     "event": message 
@@ -45,7 +46,7 @@ def sendEvent(message):
     'Authorization': '',
     'Content-Type': 'application/json'
     }
-
+    LOGGER.info(payload)
     response = requests.request("POST", url, headers=headers, data=payload)
     LOGGER.info(f"Send a fire event {response.text}")
     print(response.text)
@@ -94,6 +95,7 @@ def run(
         half=False,  # use FP16 half-precision inference
         dnn=False,  # use OpenCV DNN for ONNX inference
         vid_stride=1,  # video frame-rate stride
+        call='',
 ):
     source = str(source)
     save_img = not nosave and not source.endswith('.txt')  # save inference images
@@ -180,7 +182,7 @@ def run(
                 for *xyxy, conf, cls in reversed(det):
                     if save_txt:  # Write to file
                         xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
-                        LOGGER.info(f"xywh={xywh}")
+                        #LOGGER.info(f"xywh={xywh}")
                         line = (cls, *xywh, conf) if save_conf else (cls, *xywh)  # label format
                         with open(f'{txt_path}.txt', 'a') as f:
                             f.write(('%g ' * len(line)).rstrip() % line + '\n')
@@ -225,7 +227,7 @@ def run(
         LOGGER.info(f"{s}{'' if len(det) else '(no detections), '}{dt[1].dt * 1E3:.1f}ms")
         LOGGER.info(f"{sum}")
         if (sum % 150) == 0:
-            sendEvent(f"Police ALERT {name} ")
+            sendEvent(f"Smoke ALERT {name} ",call)
 
     # Print results
     t = tuple(x.t / seen * 1E3 for x in dt)  # speeds per image
@@ -266,6 +268,7 @@ def parse_opt():
     parser.add_argument('--half', action='store_true', help='use FP16 half-precision inference')
     parser.add_argument('--dnn', action='store_true', help='use OpenCV DNN for ONNX inference')
     parser.add_argument('--vid-stride', type=int, default=1, help='video frame-rate stride')
+    parser.add_argument('--call', type=str, default='6332963e19dd2858fabc62f6', help='call id')
     opt = parser.parse_args()
     opt.imgsz *= 2 if len(opt.imgsz) == 1 else 1  # expand
     print_args(vars(opt))
